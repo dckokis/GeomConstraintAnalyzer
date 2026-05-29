@@ -39,3 +39,9 @@ TEST(AnalyzerTest, OverDefinedRedundantEquation) {
     Analyzer a(equationSystem);
     EXPECT_EQ(a.diagnose(), Diagnosis::OverDefined);
 }
+
+TEST(AnalyzerTest, EmptySystem) {
+    EquationSystem equationSystem;
+    Analyzer a(equationSystem);
+    EXPECT_EQ(a.diagnose(), Diagnosis::Unknown);
+}

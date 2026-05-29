@@ -35,11 +35,13 @@ void Analyzer::buildJacobian()
         const auto& ids = eq.varIds();
 
         // Helper to set derivative into matrix
-        auto setDeriv = [&](int varIdx, int component, double val)
+        auto setDeriv = [this, i](int varIdx, int component, double val)
         {
             int colStart = m_varColumnStart[varIdx];
             if (colStart == -1) // fixed var
+            {
                 return;
+            }
             int col = colStart + component;
             m_jacobian[i * m_cols + col] += val; // accumulate contributions
         };
@@ -49,9 +51,8 @@ void Analyzer::buildJacobian()
         case EquationType::Norm:
             {
                 const Variable& v = vars[ids[0]];
-                double vx = v.x(), vy = v.y();
-                setDeriv(ids[0], 0, 2 * vx);
-                setDeriv(ids[0], 1, 2 * vy);
+                setDeriv(ids[0], 0, 2 * v.x());
+                setDeriv(ids[0], 1, 2 * v.y());
                 setDeriv(ids[1], 0, -1.0);
                 break;
             }
@@ -59,12 +60,10 @@ void Analyzer::buildJacobian()
             {
                 const Variable& v1 = vars[ids[0]];
                 const Variable& v2 = vars[ids[1]];
-                double v1x = v1.x(), v1y = v1.y();
-                double v2x = v2.x(), v2y = v2.y();
-                setDeriv(ids[0], 0, v2y);
-                setDeriv(ids[0], 1, -v2x);
-                setDeriv(ids[1], 0, -v1y);
-                setDeriv(ids[1], 1, v1x);
+                setDeriv(ids[0], 0, v2.y());
+                setDeriv(ids[0], 1, -v2.x());
+                setDeriv(ids[1], 0, -v1.y());
+                setDeriv(ids[1], 1, v1.x());
                 setDeriv(ids[2], 0, -1.0);
                 break;
             }
@@ -130,12 +129,16 @@ void Analyzer::buildJacobian()
 
 int Analyzer::computeRankQR()
 {
-    if (m_rows == 0 || m_cols == 0) return 0;
+    if (m_rows == 0 || m_cols == 0)
+    {
+        return 0;
+    }
 
     constexpr double tol = 1e-9;
     std::vector<int> pivot(m_cols);
     std::iota(pivot.begin(), pivot.end(), 0);
-    std::vector<double> tau(std::min(m_rows, m_cols));
+    int minDimension = std::min(m_rows, m_cols);
+    std::vector<double> tau(minDimension);
 
     for (int col = 0, k = 0; col < m_cols && k < m_rows; ++col)
     {
@@ -167,15 +170,15 @@ int Analyzer::computeRankQR()
         }
 
         // Householder reflection
-        double nrm = 0.0;
+        double sqrNorm = 0.0;
         for (int i = k; i < m_rows; ++i)
         {
-            nrm += m_jacobian[i * m_cols + col] * m_jacobian[i * m_cols + col];
+            sqrNorm += m_jacobian[i * m_cols + col] * m_jacobian[i * m_cols + col];
         }
-        nrm = std::sqrt(nrm);
+        double norm = std::sqrt(sqrNorm);
 
         double x0 = m_jacobian[k * m_cols + col];
-        double alpha = (x0 > 0) ? -nrm : nrm;
+        double alpha = norm * (x0 > 0 ? -1 : 1);
         double v0 = x0 - alpha;
 
         tau[k] = -v0 / alpha;
@@ -207,7 +210,7 @@ int Analyzer::computeRankQR()
     // Define rank by diagonal elements
     int rank = 0;
     double maxDiag = 0.0;
-    for (int i = 0; i < std::min(m_rows, m_cols); ++i)
+    for (int i = 0; i < minDimension; ++i)
     {
         double d = std::abs(m_jacobian[i * m_cols + i]);
         if (d > maxDiag)
@@ -216,7 +219,7 @@ int Analyzer::computeRankQR()
         }
     }
     double threshold = tol * maxDiag;
-    for (int i = 0; i < std::min(m_rows, m_cols); ++i)
+    for (int i = 0; i < minDimension; ++i)
     {
         if (std::abs(m_jacobian[i * m_cols + i]) > threshold)
         {
@@ -230,6 +233,10 @@ int Analyzer::computeRankQR()
 
 Diagnosis Analyzer::diagnose()
 {
+    if (m_system.equations().empty() || m_system.variables().empty())
+    {
+        return Diagnosis::Unknown;
+    }
     buildJacobian();
     int rank = computeRankQR();
     int DOF = m_cols - rank;
